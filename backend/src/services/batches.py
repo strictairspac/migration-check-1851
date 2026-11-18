@@ -9,5 +9,11 @@ def save(data,item_id=None):
  with Session() as s:
   row=s.get(Batch,item_id) if item_id else Batch()
   if not row:raise HTTPException(404,'未找到记录')
-  for k,v in data.model_dump().items():setattr(row,k,v)
+  values=data.model_dump()
+  # Any real edit bumps the revision; a no-op save keeps an existing dry run
+  # usable. An edit followed by reverting still bumps, so the old trial stays
+  # invalid.
+  changed=item_id is not None and any(getattr(row,k)!=v for k,v in values.items())
+  for k,v in values.items():setattr(row,k,v)
+  if changed:row.revision=(row.revision or 1)+1
   s.add(row);s.commit();s.refresh(row);return record(row)

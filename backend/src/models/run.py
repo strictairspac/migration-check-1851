@@ -6,6 +6,7 @@ class Run(Base):
  name=Column(String(120),unique=True,nullable=False)
  batch_id=Column(Integer,ForeignKey('batches.id'),nullable=False)
  mapping_id=Column(Integer,ForeignKey('mappings.id'),nullable=False)
+ mapping_version_id=Column(Integer,nullable=True)
  status=Column(String(20),nullable=False,default='queued')
  cancel_requested=Column(Boolean,nullable=False,default=False)
  snapshot=Column(JSON,nullable=False)

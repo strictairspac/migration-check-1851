@@ -6,7 +6,8 @@ from src.models.run import Run,TargetRow
 from src.utils.security import hash_password
 RULES=[{'source':a,'target':b,'type':c,'required':True} for a,b,c in [('委托号','sample_code','text'),('检测项','test_name','text'),('结果','result_value','decimal'),('单位','unit','text'),('时间','measured_at','datetime')]]
 def seed():
- Base.metadata.create_all(engine)
+ from src.services.schema import ensure_schema
+ ensure_schema()
  with Session() as s:
   for role in ('admin','operator','viewer'):
    if not s.query(User).filter_by(email=role+'@migration.local').first():s.add(User(email=role+'@migration.local',role=role,password=hash_password('Migrate2026!')))
@@ -19,5 +20,8 @@ def seed():
   for i,(name,_,_,_) in enumerate(seeds):
    mname=['检验结果标准映射','异常隔离复核映射','空批次映射'][i]
    if not s.query(Mapping).filter_by(name=mname).first():s.add(Mapping(name=mname,batch_id=s.query(Batch).filter_by(name=name).one().id,rules=RULES,chunk_size=4,note='sample_code + test_name 为自然键'))
-  s.commit();counts={m.__tablename__:s.query(m).count() for m in (User,Batch,Mapping,Run,TargetRow)};print(counts);return counts
+  s.commit()
+  from src.services.versioning import ensure_all_baselines
+  ensure_all_baselines()
+  counts={m.__tablename__:s.query(m).count() for m in (User,Batch,Mapping,Run,TargetRow)};print(counts);return counts
 if __name__=='__main__':seed()

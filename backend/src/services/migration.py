@@ -5,6 +5,7 @@ from src.constants.enums import TYPES
 class Cancelled(Exception):pass
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
 def key_digest(row):return digest([row['sample_code'],row['test_name']])
+def rule_digest(rules,chunk_size):return digest({'rules':rules,'chunk_size':chunk_size})
 def validate_rules(rules):
  if not isinstance(rules,list) or len(rules)!=5:raise ValueError('必须为五个目标字段各配置一条映射')
  targets=[]
@@ -40,27 +41,34 @@ def convert(value,kind,required):
   except (ValueError,TypeError):raise ValueError('invalid_datetime')
  raise ValueError('invalid_type')
 
-def migrate(rows,rules,chunk_size,progress=lambda p:None):
+def migrate(rows,rules,chunk_size,progress=lambda p:None,trace=False):
  validate_rules(rules)
  if not 1<=chunk_size<=500 or len(rows)>2000:raise ValueError('迁移配额超限')
- accepted=[];rejected=[];seen=set();chunks=[]
+ accepted=[];rejected=[];seen=set();chunks=[];outcomes=[]
  for start in range(0,len(rows),chunk_size):
   chunk=rows[start:start+chunk_size]
   for offset,source in enumerate(chunk):
+   row_number=start+offset+1
+   target={};converted=False;key=None
    try:
-    target={}
     for rule in rules:
      if rule['source'] not in source:raise ValueError('missing_column:'+rule['source'])
      try:target[rule['target']]=convert(source[rule['source']],rule['type'],rule['required'])
      except ValueError as e:raise ValueError(rule['target']+':'+str(e))
+    converted=True
     key=key_digest(target)
     if key in seen:raise ValueError('duplicate_natural_key:sample_code+test_name')
     seen.add(key);accepted.append(target)
-   except (ValueError,TypeError) as e:rejected.append({'row_number':start+offset+1,'reason':str(e),'source':source})
+    if trace:outcomes.append({'row_number':row_number,'status':'accepted','target':target,'key':key,'source':source})
+   except (ValueError,TypeError) as e:
+    rejected.append({'row_number':row_number,'reason':str(e),'source':source})
+    if trace:outcomes.append({'row_number':row_number,'status':'rejected','reason':str(e),'source':source,'target':target if converted else None,'key':key})
   item={'chunk':len(chunks)+1,'processed':start+len(chunk),'accepted':len(accepted),'rejected':len(rejected)}
   chunks.append(item);progress(item)
  if not rows:progress({'chunk':0,'processed':0,'accepted':0,'rejected':0})
- return {'accepted_rows':accepted,'rejected_rows':rejected,'row_hashes':[digest(r) for r in accepted],'checksum':digest(accepted),'chunks':chunks,'source_count':len(rows),'accepted_count':len(accepted),'rejected_count':len(rejected)}
+ result={'accepted_rows':accepted,'rejected_rows':rejected,'row_hashes':[digest(r) for r in accepted],'checksum':digest(accepted),'chunks':chunks,'source_count':len(rows),'accepted_count':len(accepted),'rejected_count':len(rejected)}
+ if trace:result['outcomes']=outcomes
+ return result
 
 def make_backup(result,run_id,batch_name):
  return {'version':1,'run_id':run_id,'batch_name':batch_name,'rows':result['accepted_rows'],'row_hashes':result['row_hashes'],'checksum':result['checksum'],'kind':'logical-json-snapshot'}

@@ -7,6 +7,7 @@ from src.models.mapping import Mapping
 from src.models.run import Run,TargetRow
 from src.services.migration import migrate,make_backup,key_digest,Cancelled
 from src.services.audit import log
+from src.services.schema import ensure_schema
 q=redis.Redis.from_url(REDIS_URL)
 def progress(run_id,info):
  Path('/tmp/worker-heartbeat').touch()
@@ -14,6 +15,8 @@ def progress(run_id,info):
   r=s.get(Run,run_id)
   if r.cancel_requested or r.status=='cancelled':raise Cancelled()
   r.progress=info;s.commit()
+try:ensure_schema()
+except Exception:logging.exception('schema upgrade failed; worker continues')
 while True:
  Path('/tmp/worker-heartbeat').touch()
  try:
@@ -25,6 +28,8 @@ while True:
    if not r or r.status!='queued':continue
    r.status='running';snapshot=r.snapshot;s.commit()
   try:
+   # Snapshot is frozen at acceptance: later rule switches or batch edits
+   # never reach a queued or running job.
    result=migrate(snapshot['batch']['rows'],snapshot['mapping']['rules'],snapshot['mapping']['chunk_size'],lambda info:progress(run_id,info))
    result['backup']=make_backup(result,run_id,snapshot['batch']['name'])
    with Session() as s:

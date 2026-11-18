@@ -8,6 +8,7 @@ from src.models.mapping import Mapping
 from src.models.run import Run,TargetRow
 from src.utils.serialization import record
 from src.services.migration import digest,key_digest,validate_backup
+from src.services.versioning import resolve_for_batch
 queue=redis.Redis.from_url(REDIS_URL)
 def list_items():
  with Session() as s:return [record(r) for r in s.query(Run).order_by(Run.id.desc()).limit(100).all()]
@@ -18,11 +19,17 @@ def detail(item_id):
   return record(r)
 def create(data):
  with Session() as s:
-  m=s.get(Mapping,data.mapping_id)
+  m=s.query(Mapping).filter_by(id=data.mapping_id).with_for_update().first()
   if not m:raise HTTPException(404,'未找到字段映射')
   b=s.get(Batch,m.batch_id)
-  r=Run(name=data.name,batch_id=b.id,mapping_id=m.id,status='queued',snapshot={'batch':record(b),'mapping':record(m)})
-  s.add(r);s.commit();s.refresh(r);result=record(r)
+  if not b:raise HTTPException(404,'未找到迁移批次')
+  # Freeze the version that applies to this batch revision right now. Later
+  # rule edits or confirmations cannot change an already accepted run.
+  version=resolve_for_batch(s,m,b)
+  if not version:raise HTTPException(409,'映射没有可用的规则版本')
+  snapshot={'batch':record(b),'mapping':{**record(m),'version_id':version.id,'version_no':version.version_no,'rules':version.rules,'chunk_size':version.chunk_size,'rule_digest':version.rule_digest},'batch_revision':b.revision}
+  r=Run(name=data.name,batch_id=b.id,mapping_id=m.id,mapping_version_id=version.id,status='queued',snapshot=snapshot)
+  s.add(r);s.flush();s.commit();s.refresh(r);result=record(r)
  try:queue.rpush('migration-runs',result['id'])
  except redis.RedisError:
   with Session() as s:r=s.get(Run,result['id']);r.status='failed';r.error='队列不可用，请创建新任务';s.commit()

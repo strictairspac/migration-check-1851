@@ -7,3 +7,6 @@ class Batch(Base):
  source_file=Column(String(160),nullable=False)
  description=Column(String(500),nullable=False,default='')
  rows=Column(JSON,nullable=False)
+ # Monotonic edit counter. Any save increments it, including a save that
+ # restores the previous content, so an earlier dry run can never be revived.
+ revision=Column(Integer,nullable=False,default=1,server_default='1')
